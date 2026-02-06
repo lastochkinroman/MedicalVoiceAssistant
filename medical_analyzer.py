@@ -1,18 +1,33 @@
+"""Medical analysis module using Groq AI for patient request analysis."""
+
 import asyncio
+import logging
 from typing import Dict, Any
+
 from groq import Groq
 from config import Config
-import logging
 
 logger = logging.getLogger(__name__)
 
+
 class MedicalAnalyzer:
+    """Handles medical analysis of patient requests using Groq AI."""
+
     def __init__(self):
+        """Initialize the medical analyzer with configuration."""
         self.client = Groq(api_key=Config.GROQ_API_KEY)
         self.model = Config.GROQ_MODEL
         self.temperature = Config.GROQ_TEMPERATURE
 
     async def analyze_patient_request(self, patient_text: str) -> Dict[str, Any]:
+        """Analyze patient request using AI.
+
+        Args:
+            patient_text: Text of patient's request
+
+        Returns:
+            Dict[str, Any]: Analysis results
+        """
         try:
             system_prompt = """Ты - опытный врач общей практики. Твоя задача:
             1. Анализировать обращения пациентов
@@ -46,20 +61,19 @@ class MedicalAnalyzer:
 
             Будь профессиональным, точным и полезным."""
 
-            user_prompt = f"""Пациент обратился с жалобой/вопросом:
+            user_prompt = (
+                f"Пациент обратился с жалобой/вопросом:\n\n"
+                f'"{patient_text}"\n\n'
+                "Проанализируй это обращение по указанной структуре."
+            )
 
-            "{patient_text}"
-
-            Проанализируй это обращение по указанной структуре."""
-
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=self.temperature,
-                max_tokens=800
+            # Run synchronous API call in separate thread to avoid blocking
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                self._call_groq_api,
+                system_prompt,
+                user_prompt
             )
 
             analysis = response.choices[0].message.content.strip()
@@ -70,7 +84,10 @@ class MedicalAnalyzer:
                 "analysis": analysis,
                 "request_type": request_type,
                 "keywords": keywords,
-                "original_text": patient_text[:500] + "..." if len(patient_text) > 500 else patient_text
+                "original_text": (
+                    patient_text[:500] + "..." if len(patient_text) > 500
+                    else patient_text
+                ),
             }
 
         except Exception as e:
@@ -79,10 +96,38 @@ class MedicalAnalyzer:
                 "analysis": "Не удалось проанализировать обращение.",
                 "request_type": "Не определен",
                 "keywords": [],
-                "original_text": patient_text[:200] if patient_text else ""
+                "original_text": patient_text[:200] if patient_text else "",
             }
 
+    def _call_groq_api(self, system_prompt: str, user_prompt: str):
+        """Call Groq API synchronously.
+
+        Args:
+            system_prompt: System prompt for AI
+            user_prompt: User prompt for AI
+
+        Returns:
+            API response
+        """
+        return self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=self.temperature,
+            max_tokens=800,
+        )
+
     def _detect_request_type(self, text: str) -> str:
+        """Detect type of patient request.
+
+        Args:
+            text: Patient's request text
+
+        Returns:
+            str: Request type
+        """
         text_lower = text.lower()
 
         request_types = {
@@ -90,7 +135,7 @@ class MedicalAnalyzer:
             "Диагностика": ["обследован", "анализ", "рентген", "узи", "диагноз"],
             "Лечение": ["леч", "таблетк", "укол", "мазь", "препарат"],
             "Профилактика": ["профилактик", "прививк", "здоровь", "предупред"],
-            "Жалоба": ["жалоб", "проблем", "недовол", "плох", "ужасн"]
+            "Жалоба": ["жалоб", "проблем", "недовол", "плох", "ужасн"],
         }
 
         for req_type, keywords in request_types.items():
@@ -101,13 +146,21 @@ class MedicalAnalyzer:
         return "Консультация"
 
     def _extract_keywords(self, text: str) -> list:
+        """Extract medical keywords from patient's text.
+
+        Args:
+            text: Patient's request text
+
+        Returns:
+            list: List of extracted keywords
+        """
         text_lower = text.lower()
         keywords = []
 
         medical_terms = [
             "боль", "температур", "давлен", "сердц", "голова", "живот",
             "кашель", "насморк", "тошнот", "рвот", "аллерги", "инфекц",
-            "препарат", "таблетк", "укол", "мазь", "анализ", "обследован"
+            "препарат", "таблетк", "укол", "мазь", "анализ", "обследован",
         ]
 
         for term in medical_terms:
@@ -116,4 +169,6 @@ class MedicalAnalyzer:
 
         return list(set(keywords))[:5]
 
+
+# Singleton instance for module-level access
 medical_analyzer = MedicalAnalyzer()
